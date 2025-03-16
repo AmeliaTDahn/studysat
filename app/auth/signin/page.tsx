@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -17,16 +17,65 @@ const poppins = Poppins({
   display: 'swap',
 });
 
+// Rate limiting configuration
+const RATE_LIMIT_WINDOW = 60000; // 1 minute in milliseconds
+const MAX_ATTEMPTS = 3; // Maximum attempts per window
+
 export default function SignIn() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [attempts, setAttempts] = useState(0);
+  const [lastAttemptTime, setLastAttemptTime] = useState(0);
+  const [timeRemaining, setTimeRemaining] = useState(0);
   const router = useRouter();
   const supabase = createClientComponentClient();
 
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (timeRemaining > 0) {
+      interval = setInterval(() => {
+        setTimeRemaining((time) => {
+          if (time <= 1) {
+            setAttempts(0);
+            return 0;
+          }
+          return time - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [timeRemaining]);
+
+  const checkRateLimit = () => {
+    const now = Date.now();
+    if (now - lastAttemptTime > RATE_LIMIT_WINDOW) {
+      // Reset if window has passed
+      setAttempts(1);
+      setLastAttemptTime(now);
+      return true;
+    }
+
+    if (attempts >= MAX_ATTEMPTS) {
+      const remainingTime = Math.ceil((RATE_LIMIT_WINDOW - (now - lastAttemptTime)) / 1000);
+      setTimeRemaining(remainingTime);
+      setError(`Too many sign in attempts. Please wait ${remainingTime} seconds before trying again.`);
+      return false;
+    }
+
+    setAttempts((prev) => prev + 1);
+    setLastAttemptTime(now);
+    return true;
+  };
+
   const handleSignIn = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    
+    if (!checkRateLimit()) {
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -40,35 +89,7 @@ export default function SignIn() {
       if (signInError) throw signInError;
 
       if (signInData?.user) {
-        // Check if user profile exists
-        const { data: profileData, error: profileError } = await supabase
-          .from('users')
-          .select()
-          .eq('id', signInData.user.id)
-          .single();
-
-        if (profileError && profileError.code === 'PGRST116') {
-          // Profile doesn't exist, create it
-          console.log('Creating new user profile...');
-          const { error: insertError } = await supabase
-            .from('users')
-            .insert({
-              id: signInData.user.id,
-              email: signInData.user.email,
-              full_name: signInData.user.user_metadata.full_name || '',
-            })
-            .select()
-            .single();
-
-          if (insertError) {
-            console.error('Error creating user profile:', insertError);
-            // Don't throw error, allow user to proceed
-          } else {
-            console.log('Profile created successfully');
-          }
-        }
-
-        router.push('/math');
+        router.push('/subjects');
         router.refresh();
       }
     } catch (error: any) {
@@ -100,6 +121,7 @@ export default function SignIn() {
                 required
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="you@example.com"
+                disabled={timeRemaining > 0}
               />
             </div>
 
@@ -115,6 +137,7 @@ export default function SignIn() {
                 required
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="••••••••"
+                disabled={timeRemaining > 0}
               />
             </div>
 
@@ -124,9 +147,15 @@ export default function SignIn() {
               </div>
             )}
 
+            {timeRemaining > 0 && (
+              <div className="text-center text-sm text-gray-600">
+                Please wait {timeRemaining} seconds before trying again
+              </div>
+            )}
+
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || timeRemaining > 0}
               className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition duration-300 disabled:opacity-50"
             >
               {loading ? 'Signing In...' : 'Sign In'}

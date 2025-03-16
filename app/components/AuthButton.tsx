@@ -6,24 +6,30 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 export default function AuthButton() {
-  const [email, setEmail] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const router = useRouter();
   const supabase = createClientComponentClient();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setEmail(user?.email ?? null);
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setIsAuthenticated(!!session);
       setLoading(false);
     };
 
-    getUser();
+    checkUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(!!session);
+    });
+
+    return () => subscription.unsubscribe();
   }, [supabase.auth]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
-    router.push('/auth/signin');
+    router.push('/');
     router.refresh();
   };
 
@@ -31,18 +37,18 @@ export default function AuthButton() {
     return null;
   }
 
-  if (!email) {
+  if (!isAuthenticated) {
     return (
-      <div className="flex items-center gap-4">
+      <div className="flex items-center space-x-4">
         <Link
           href="/auth/signin"
-          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+          className="text-gray-600 hover:text-gray-900 font-medium"
         >
           Sign In
         </Link>
         <Link
           href="/auth/signup"
-          className="inline-flex items-center px-4 py-2 border border-blue-600 text-sm font-medium rounded-md text-blue-600 bg-white hover:bg-blue-50"
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition duration-200"
         >
           Sign Up
         </Link>
@@ -51,14 +57,11 @@ export default function AuthButton() {
   }
 
   return (
-    <div className="flex items-center gap-4">
-      <span className="text-sm text-gray-700">{email}</span>
-      <button
-        onClick={handleSignOut}
-        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
-      >
-        Sign Out
-      </button>
-    </div>
+    <button
+      onClick={handleSignOut}
+      className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition duration-200"
+    >
+      Sign Out
+    </button>
   );
 } 

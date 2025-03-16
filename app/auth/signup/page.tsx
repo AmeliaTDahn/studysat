@@ -32,6 +32,7 @@ export default function SignUp() {
     setError(null);
 
     try {
+      // Step 1: Sign up the user
       const { data: authData, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
@@ -44,25 +45,42 @@ export default function SignUp() {
       });
 
       if (signUpError) {
-        console.error('Signup error:', signUpError);
         throw signUpError;
       }
 
-      if (authData?.user) {
-        console.log('Auth successful, creating user profile...', authData.user);
-        
-        // Check if email confirmation is required
-        if (authData.session) {
-          // User is signed in immediately
-          router.push('/');
-          router.refresh();
+      if (!authData.user) {
+        throw new Error('No user data returned from signup');
+      }
+
+      // Step 2: Create user profile in the users table
+      const { error: profileError } = await supabase
+        .from('users')
+        .insert({
+          id: authData.user.id,
+          email: authData.user.email,
+          full_name: fullName,
+        })
+        .single();
+
+      if (profileError) {
+        console.error('Error creating user profile:', profileError);
+        // If profile creation fails, we should handle it appropriately
+        if (profileError.code === '23505') { // unique_violation
+          // Profile already exists, which is fine
+          console.log('User profile already exists');
         } else {
-          // Email confirmation is required
-          router.push('/auth/verify-email');
+          throw profileError;
         }
+      }
+
+      // Step 3: Handle post-signup navigation
+      if (authData.session) {
+        // User is signed in immediately
+        router.push('/subjects');
+        router.refresh();
       } else {
-        console.error('No user data returned from signup');
-        setError('Failed to create account. Please try again.');
+        // Email confirmation is required
+        router.push('/auth/verify-email');
       }
     } catch (error: any) {
       console.error('Error during signup:', error);

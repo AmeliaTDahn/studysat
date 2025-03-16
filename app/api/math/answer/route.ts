@@ -2,10 +2,20 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 
-// Helper function to normalize answers for comparison
-function normalizeAnswer(answer: string): string {
-  // Remove whitespace, make lowercase, and remove any special characters
-  return answer.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
+interface QuestionOption {
+  answer: string;
+  is_correct: boolean;
+  explanation: string;
+}
+
+interface DatabaseQuestion {
+  id: string;
+  text: string;
+  options: QuestionOption[];
+  correct_answer: string;
+  explanation: string;
+  difficulty: string;
+  topic: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -24,65 +34,51 @@ export async function POST(request: NextRequest) {
     );
 
     const body = await request.json();
-    const { questionId, answer, timeTaken } = body;
+    const { questionId, answer } = body;
 
     if (!questionId || !answer) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
-
-    // Get the current user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ 
+        error: 'Missing required fields' 
+      }, { status: 400 });
     }
 
     // Get the question from the database
-    const { data: question, error: questionError } = await supabase
+    const { data: questions, error } = await supabase
       .from('questions')
-      .select('correct_answer, explanation')
+      .select('*')
       .eq('id', questionId)
-      .single();
+      .limit(1);
 
-    if (questionError || !question) {
+    if (error) {
+      console.error('Error fetching question:', error);
+      return NextResponse.json({ error: 'Failed to fetch question' }, { status: 500 });
+    }
+
+    if (!questions || questions.length === 0) {
       return NextResponse.json({ error: 'Question not found' }, { status: 404 });
     }
 
-    // Compare normalized versions of the answers
-    const normalizedSubmitted = normalizeAnswer(answer);
-    const normalizedCorrect = normalizeAnswer(question.correct_answer);
-    const isCorrect = normalizedSubmitted === normalizedCorrect;
+    const question = questions[0] as DatabaseQuestion;
+    const selectedOption = question.options.find(opt => opt.answer === answer);
 
-    // For debugging
-    console.log('Submitted answer:', answer);
-    console.log('Correct answer:', question.correct_answer);
-    console.log('Normalized submitted:', normalizedSubmitted);
-    console.log('Normalized correct:', normalizedCorrect);
-    console.log('Is correct:', isCorrect);
-
-    // Store the user's answer
-    const { error: answerError } = await supabase
-      .from('user_answers')
-      .insert({
-        user_id: user.id,
-        question_id: questionId,
-        selected_answer: answer,
-        is_correct: isCorrect,
-        time_taken: timeTaken || null
+    if (!selectedOption) {
+      return NextResponse.json({ 
+        correct: false,
+        message: 'Invalid answer',
+        explanation: 'The selected answer was not found in the options.'
       });
-
-    if (answerError) {
-      console.error('Error storing answer:', answerError);
-      // Continue execution even if storing fails - we still want to give feedback
     }
 
     return NextResponse.json({
-      correct: isCorrect,
-      explanation: question.explanation,
-      message: isCorrect ? 'Correct! Great job!' : 'Incorrect. Try again!'
+      correct: selectedOption.is_correct,
+      message: selectedOption.is_correct ? 'Correct!' : 'Incorrect.',
+      explanation: selectedOption.explanation
     });
-
   } catch (error) {
-    console.error('Error evaluating answer:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    console.error('Error in POST handler:', error);
+    return NextResponse.json({ 
+      error: 'Internal server error',
+      details: error.message
+    }, { status: 500 });
   }
 } 
