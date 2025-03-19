@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { FaBook, FaChartLine, FaClock, FaGraduationCap, FaUpload, FaFile, FaClock as FaTimer } from 'react-icons/fa';
+import { FaBook, FaChartLine, FaClock, FaGraduationCap, FaUpload, FaFile, FaClock as FaTimer, FaCalendarAlt } from 'react-icons/fa';
 import Navigation from '../components/Navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
@@ -41,6 +41,13 @@ const menuItems = [
     icon: <FaClock className="w-8 h-8" />,
     href: '/study-timer',
     color: 'bg-purple-100 text-purple-600'
+  },
+  {
+    title: 'Calendar',
+    description: 'Manage your test dates and homework deadlines',
+    icon: <FaCalendarAlt className="w-8 h-8" />,
+    href: '/calendar',
+    color: 'bg-yellow-100 text-yellow-600'
   },
   {
     title: 'Resources',

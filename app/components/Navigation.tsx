@@ -3,7 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { FaHome, FaBook, FaChartLine, FaClock, FaGraduationCap } from 'react-icons/fa';
+import { FaHome, FaBook, FaChartLine, FaClock, FaGraduationCap, FaCalendarAlt } from 'react-icons/fa';
 
 const navItems = [
   {
@@ -25,6 +25,11 @@ const navItems = [
     label: 'Study Timer',
     href: '/study-timer',
     icon: <FaClock className="w-5 h-5" />
+  },
+  {
+    label: 'Calendar',
+    href: '/calendar',
+    icon: <FaCalendarAlt className="w-5 h-5" />
   },
   {
     label: 'Resources',
@@ -58,26 +63,12 @@ export default function Navigation() {
             </Link>
 
             <div className="hidden md:flex md:items-center md:space-x-4">
-              <Link href="/home" className={linkClass('/home')}>
-                <FaHome className="w-5 h-5" />
-                <span>Home</span>
-              </Link>
-              <Link href="/subjects" className={linkClass('/subjects')}>
-                <FaBook className="w-5 h-5" />
-                <span>Subjects</span>
-              </Link>
-              <Link href="/progress" className={linkClass('/progress')}>
-                <FaChartLine className="w-5 h-5" />
-                <span>Progress</span>
-              </Link>
-              <Link href="/study-timer" className={linkClass('/study-timer')}>
-                <FaClock className="w-5 h-5" />
-                <span>Study Timer</span>
-              </Link>
-              <Link href="/resources" className={linkClass('/resources')}>
-                <FaGraduationCap className="w-5 h-5" />
-                <span>Resources</span>
-              </Link>
+              {navItems.map((item) => (
+                <Link key={item.href} href={item.href} className={linkClass(item.href)}>
+                  {item.icon}
+                  <span>{item.label}</span>
+                </Link>
+              ))}
             </div>
           </div>
         </div>

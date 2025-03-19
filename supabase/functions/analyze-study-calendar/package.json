@@ -1,0 +1,13 @@
+{
+  "name": "analyze-study-calendar",
+  "version": "1.0.0",
+  "description": "Edge Function to analyze study calendar and generate AI suggestions",
+  "main": "index.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "openai": "^4.24.0"
+  }
+} 
