@@ -384,18 +384,28 @@ export function ViewEventModal({ isOpen, onClose, event, onDelete, onEventUpdate
       .split('---')
       .map(methodStr => {
         const [methodName, ...rest] = methodStr.trim().split('\n');
-        const applicationStart = rest.indexOf('Step-by-Step Application:');
-        const rationaleStart = rest.indexOf('Why This Method Works:');
+        const applicationStart = rest.findIndex(line => line.trim() === 'Step-by-Step Application:');
+        const rationaleStart = rest.findIndex(line => line.trim() === 'Why This Method Works:');
         
+        if (applicationStart === -1 || rationaleStart === -1) return null;
+
+        const application = rest
+          .slice(applicationStart + 1, rationaleStart)
+          .filter(line => line.trim().startsWith('•'))
+          .map(line => line.trim().substring(1).trim());
+
+        const rationale = rest
+          .slice(rationaleStart + 1)
+          .join('\n')
+          .trim();
+
         return {
           method: methodName.trim(),
-          application: rest
-            .slice(applicationStart + 1, rationaleStart)
-            .filter(line => line.trim().startsWith('•'))
-            .map(line => line.trim().substring(2)),
-          rationale: rest.slice(rationaleStart + 1).join('\n').trim()
+          application,
+          rationale
         };
-      }) : [];
+      })
+      .filter(method => method !== null) : [];
 
   const handleDeleteEvent = async () => {
     if (!event) return;
@@ -534,6 +544,10 @@ export function ViewEventModal({ isOpen, onClose, event, onDelete, onEventUpdate
         throw new Error('Not authenticated');
       }
 
+      // Ensure dates are in UTC
+      const startDate = new Date(eventData.startTime);
+      const endDate = new Date(eventData.endTime);
+
       const { data: event, error } = await supabase
         .from('calendar_events')
         .insert({
@@ -541,8 +555,8 @@ export function ViewEventModal({ isOpen, onClose, event, onDelete, onEventUpdate
           title: eventData.title,
           description: eventData.description,
           event_type: eventData.eventType,
-          start_date: eventData.startTime.toISOString(),
-          end_date: eventData.endTime.toISOString(),
+          start_date: startDate.toISOString(),
+          end_date: endDate.toISOString(),
           all_day: eventData.allDay,
           subject_id: eventData.subjectId
         })
@@ -673,14 +687,19 @@ export function ViewEventModal({ isOpen, onClose, event, onDelete, onEventUpdate
               <AiStudySuggestions
                 documents={linkedDocuments}
                 eventDate={event.start}
-                onCreateEvent={(newEvent) => {
-                  handleCreateEvent({
-                    ...newEvent,
-                    eventType: 'study_session',
-                    allDay: false,
-                    subjectId: event.subjectId,
-                  });
-                  onEventUpdated();
+                onCreateEvent={async (newEvent) => {
+                  try {
+                    await handleCreateEvent({
+                      ...newEvent,
+                      eventType: 'study_session',
+                      allDay: false,
+                      subjectId: event.subjectId,
+                    });
+                    onClose(); // Close the modal after successful event creation
+                    onEventUpdated(); // Refresh the calendar view
+                  } catch (error) {
+                    console.error('Error creating study event:', error);
+                  }
                 }}
               />
             </div>
@@ -737,6 +756,8 @@ export default function CalendarPage() {
       const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
       const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
 
+      console.log('Fetching events from', startOfMonth, 'to', endOfMonth);
+
       const { data: calendarEvents, error } = await supabase
         .from('calendar_events')
         .select('*, subjects(name)')
@@ -746,18 +767,27 @@ export default function CalendarPage() {
 
       if (error) throw error;
 
-      const formattedEvents: CalendarEvent[] = calendarEvents.map((event: CalendarEventDB) => ({
-        id: event.id,
-        title: event.title,
-        start: parseISO(event.start_date),
-        end: event.end_date ? parseISO(event.end_date) : parseISO(event.start_date),
-        allDay: event.all_day,
-        description: event.description || undefined,
-        eventType: event.event_type,
-        subjectId: event.subject_id || undefined,
-        subject: event.subjects?.name
-      }));
+      console.log('Raw calendar events:', calendarEvents);
 
+      const formattedEvents: CalendarEvent[] = calendarEvents.map((event: CalendarEventDB) => {
+        // Parse dates from ISO string and preserve the local time
+        const start = new Date(event.start_date);
+        const end = event.end_date ? new Date(event.end_date) : start;
+        
+        return {
+          id: event.id,
+          title: event.title,
+          start: start,
+          end: end,
+          allDay: event.all_day,
+          description: event.description || undefined,
+          eventType: event.event_type,
+          subjectId: event.subject_id || undefined,
+          subject: event.subjects?.name
+        };
+      });
+
+      console.log('Formatted events:', formattedEvents);
       setEvents(formattedEvents);
     } catch (error) {
       console.error('Error fetching events:', error);

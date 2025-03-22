@@ -16,7 +16,7 @@ export interface StudyEvent {
   title: string;
   description: string;
   suggestedDuration: number; // in minutes
-  studyMethods: StudyMethod[];
+  studyMethods?: StudyMethod[];
   status?: 'pending' | 'accepted' | 'rejected' | 'completed';
   priority?: number;
   startDate?: Date;

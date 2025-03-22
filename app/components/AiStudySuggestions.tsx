@@ -17,25 +17,21 @@ function TimePickerDialog({ isOpen, onClose, onConfirm, suggestedDuration }: Tim
   const handleConfirm = () => {
     if (selectedDate && selectedTime) {
       try {
-        // Parse the time string
         const [hours, minutes] = selectedTime.split(':').map(Number);
         if (isNaN(hours) || isNaN(minutes)) {
           throw new Error('Invalid time format');
         }
 
-        // Create date object for selected date at midnight
-        const dateTime = new Date(selectedDate);
+        // Create date in local timezone by using the user's timezone offset
+        const [year, month, day] = selectedDate.split('-').map(Number);
+        const dateTime = new Date(year, month - 1, day);
         if (isNaN(dateTime.getTime())) {
           throw new Error('Invalid date');
         }
 
-        // Set the time components
-        dateTime.setHours(hours);
-        dateTime.setMinutes(minutes);
-        dateTime.setSeconds(0);
-        dateTime.setMilliseconds(0);
+        // Set time components in local timezone
+        dateTime.setHours(hours, minutes, 0, 0);
 
-        // Validate final datetime
         if (isNaN(dateTime.getTime())) {
           throw new Error('Invalid date/time combination');
         }
@@ -44,7 +40,6 @@ function TimePickerDialog({ isOpen, onClose, onConfirm, suggestedDuration }: Tim
         onClose();
       } catch (err) {
         console.error('Error creating date:', err);
-        // You might want to show this error to the user
       }
     }
   };
@@ -88,7 +83,7 @@ function TimePickerDialog({ isOpen, onClose, onConfirm, suggestedDuration }: Tim
               <button
                 onClick={handleConfirm}
                 disabled={!selectedDate || !selectedTime}
-                className="px-3 py-2 text-sm bg-violet-600 text-white rounded-md hover:bg-violet-700 disabled:opacity-50"
+                className="px-3 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
               >
                 Schedule
               </button>
@@ -106,11 +101,11 @@ interface LearningObjectivesProps {
 
 function LearningObjectives({ objectives }: LearningObjectivesProps) {
   return (
-    <div className="bg-blue-50 rounded-lg p-6 border-l-4 border-blue-500 mb-6">
-      <h4 className="text-sm font-semibold text-blue-800 mb-4">Learning Objectives</h4>
+    <div className="bg-blue-50 p-4 rounded-lg mb-4">
+      <h4 className="text-sm font-semibold text-gray-700 mb-2">Learning Objectives</h4>
       <div className="space-y-2">
         {objectives.map((objective, index) => (
-          <div key={index} className="flex items-start text-sm text-blue-700">
+          <div key={index} className="flex items-start text-sm text-gray-600">
             <span className="mr-2">{index + 1}.</span>
             <span>{objective}</span>
           </div>
@@ -134,7 +129,6 @@ export default function AiStudySuggestions({ documents, eventDate, onCreateEvent
   const [isTimePickerOpen, setIsTimePickerOpen] = useState(false);
   const supabase = createClientComponentClient();
 
-  // Fetch stored suggestions when component mounts or eventDate changes
   useEffect(() => {
     const fetchStoredSuggestions = async () => {
       try {
@@ -146,7 +140,6 @@ export default function AiStudySuggestions({ documents, eventDate, onCreateEvent
         setSuggestions(data.suggestions || []);
       } catch (err) {
         console.error('Error fetching stored suggestions:', err);
-        // Don't show error to user, just log it - they can still generate new suggestions
       }
     };
 
@@ -194,22 +187,18 @@ export default function AiStudySuggestions({ documents, eventDate, onCreateEvent
     if (!selectedSuggestion) return;
 
     try {
-      // Ensure we have a valid date and suggested duration
       if (isNaN(startTime.getTime())) {
         throw new Error('Invalid start time');
       }
 
-      // Convert duration to a number and validate
       const duration = Number(selectedSuggestion.suggestedDuration);
       if (isNaN(duration) || duration <= 0) {
-        console.error('Invalid duration:', selectedSuggestion.suggestedDuration);
         throw new Error('Invalid duration');
       }
 
-      // Calculate end time by adding minutes to start time
+      // Calculate end time in local timezone
       const endTime = new Date(startTime.getTime() + (duration * 60 * 1000));
 
-      // Double check end time is valid
       if (isNaN(endTime.getTime())) {
         throw new Error('Invalid end time calculation');
       }
@@ -219,30 +208,63 @@ export default function AiStudySuggestions({ documents, eventDate, onCreateEvent
         throw new Error('Not authenticated');
       }
 
-      // Store in ai_calendar_suggestions
+      // Format study methods into the description
+      const studyMethodsText = selectedSuggestion.studyMethods?.length 
+        ? '\n\nStudy Methods:\n' + selectedSuggestion.studyMethods.map(method => `
+${method.method}
+Step-by-Step Application:
+${method.application.split('\n').map(step => `• ${step.trim()}`).join('\n')}
+Why This Method Works:
+${method.rationale}
+---`).join('\n')
+        : '';
+
+      // Create the full description with learning objectives and study methods
+      const fullDescription = `${selectedSuggestion.description}${studyMethodsText}`;
+
+      // Create the calendar event using local timezone dates
+      const { data: calendarEvent, error: calendarError } = await supabase
+        .from('calendar_events')
+        .insert({
+          user_id: session.user.id,
+          title: selectedSuggestion.title,
+          description: fullDescription,
+          event_type: 'study_session',
+          start_date: startTime.toISOString(),
+          end_date: endTime.toISOString(),
+          all_day: false
+        })
+        .select()
+        .single();
+
+      if (calendarError) {
+        throw new Error('Failed to create calendar event');
+      }
+
+      // Link documents from the AI study event to the new calendar event
+      const { error: linkError } = await supabase
+        .rpc('link_ai_event_documents', {
+          ai_event_id: selectedSuggestion.id,
+          calendar_event_id: calendarEvent.id
+        });
+
+      if (linkError) {
+        console.error('Error linking documents:', linkError);
+        // Don't throw here, as the event was created successfully
+      }
+
+      // Create the suggestion record
       const { data: suggestionData, error: suggestionError } = await supabase
         .from('ai_calendar_suggestions')
         .insert({
           user_id: session.user.id,
           title: selectedSuggestion.title,
-          description: `${selectedSuggestion.description}\n\n` +
-            `Study Methods:\n` +
-            selectedSuggestion.studyMethods?.map(method => 
-              `\n${method.method}\n` +
-              `Step-by-Step Application:\n` +
-              method.application.split(/\d+\./).filter(Boolean).map(step => 
-                `• ${step.trim()}`
-              ).join('\n') +
-              `\n\nWhy This Method Works:\n${method.rationale}\n`
-            ).join('\n---\n') || '',
-          priority: 3, // Default priority
+          description: fullDescription,
+          priority: 3,
           recommended_duration: `${duration} minutes`,
           start_date: startTime.toISOString(),
           end_date: endTime.toISOString(),
-          status: 'accepted',
-          ai_explanation: selectedSuggestion.studyMethods?.map(m => 
-            `${m.method}: ${m.application}`
-          ).join('\n') || 'No specific study methods provided'
+          status: 'accepted'
         })
         .select()
         .single();
@@ -250,23 +272,6 @@ export default function AiStudySuggestions({ documents, eventDate, onCreateEvent
       if (suggestionError) {
         throw new Error('Failed to store suggestion');
       }
-
-      // Create the calendar event with both start and end times
-      onCreateEvent({
-        title: selectedSuggestion.title,
-        description: `${selectedSuggestion.description}\n\n` +
-          `Study Methods:\n` +
-          selectedSuggestion.studyMethods?.map(method => 
-            `\n${method.method}\n` +
-            `Step-by-Step Application:\n` +
-            method.application.split(/\d+\./).filter(Boolean).map(step => 
-              `• ${step.trim()}`
-            ).join('\n') +
-            `\n\nWhy This Method Works:\n${method.rationale}\n`
-          ).join('\n---\n') || '',
-        startTime,
-        endTime,
-      });
 
       setIsTimePickerOpen(false);
       setError(null);
@@ -279,12 +284,10 @@ export default function AiStudySuggestions({ documents, eventDate, onCreateEvent
   };
 
   const formatNumberedList = (text: string) => {
-    // This will preserve numbers at the start of each item
     return text.split('\n')
       .map(line => line.trim())
       .filter(line => line.length > 0)
       .map(line => {
-        // If line starts with a number followed by a dot, preserve it
         const match = line.match(/^(\d+\.\s*)(.*)/);
         if (match) {
           return `${match[1]}${match[2]}`;
@@ -304,14 +307,13 @@ export default function AiStudySuggestions({ documents, eventDate, onCreateEvent
   };
 
   const formatDescription = (description: string): string => {
-    // Remove the learning objectives section from the main description
     return description.replace(/Learning objectives:.*?(?=\n\n|$)/s, '').trim();
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-lg p-6">
+    <div className="bg-white rounded-lg p-6">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-semibold text-blue-900">AI Study Suggestions</h2>
+        <h2 className="text-xl font-medium text-gray-900">Study Suggestions</h2>
         <button
           onClick={generateSuggestions}
           disabled={loading}
@@ -322,55 +324,53 @@ export default function AiStudySuggestions({ documents, eventDate, onCreateEvent
       </div>
 
       {error && (
-        <div className="mb-6 p-4 bg-red-50 text-red-700 rounded-lg">
+        <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-md text-sm">
           {error}
         </div>
       )}
 
       <div className="space-y-6">
         {suggestions.map((suggestion, index) => (
-          <div key={index}>
-            <div className="bg-blue-50 rounded-lg p-6 border-l-4 border-blue-500 mb-6">
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <h3 className="text-lg font-semibold text-blue-900 mb-2">
-                    {suggestion.title}
-                  </h3>
-                  <p className="text-sm text-blue-700">
-                    Duration: {suggestion.suggestedDuration} minutes
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleCreateEvent(suggestion)}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                >
-                  Create Event
-                </button>
-              </div>
-
+          <div key={index} className="bg-gray-50 rounded-lg p-6">
+            <div className="flex justify-between items-start mb-4">
               <div>
-                <h4 className="text-sm font-semibold text-blue-800 mb-2">Overview</h4>
-                <p className="text-sm text-blue-700 whitespace-pre-wrap">
-                  {formatDescription(suggestion.description)}
+                <h3 className="text-lg font-medium text-gray-900 mb-1">
+                  {suggestion.title}
+                </h3>
+                <p className="text-sm text-gray-600">
+                  Duration: {suggestion.suggestedDuration} minutes
                 </p>
               </div>
+              <button
+                onClick={() => handleCreateEvent(suggestion)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                Create Event
+              </button>
             </div>
 
             <LearningObjectives 
               objectives={extractLearningObjectives(suggestion.description)} 
             />
 
+            <div className="mb-4">
+              <h4 className="text-sm font-medium text-gray-700 mb-2">Overview</h4>
+              <p className="text-sm text-gray-600 whitespace-pre-wrap">
+                {formatDescription(suggestion.description)}
+              </p>
+            </div>
+
             {suggestion.studyMethods && suggestion.studyMethods.length > 0 && (
-              <div className="bg-white rounded-lg p-6 border border-blue-200">
-                <h4 className="text-sm font-semibold text-blue-800 mb-4">Study Methods</h4>
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 mb-3">Study Methods</h4>
                 <div className="space-y-4">
                   {suggestion.studyMethods.map((method, methodIndex) => (
-                    <div key={methodIndex} className="bg-blue-50 rounded-lg p-4">
-                      <h5 className="font-medium text-blue-900 mb-3">{method.method}</h5>
+                    <div key={methodIndex} className="bg-white rounded-md p-4 border border-gray-200">
+                      <h5 className="font-medium text-gray-900 mb-3">{method.method}</h5>
                       
                       <div className="mb-4">
-                        <h6 className="text-sm font-medium text-blue-800 mb-2">Step-by-Step Application</h6>
-                        <div className="text-sm text-blue-700 space-y-2">
+                        <h6 className="text-sm font-medium text-gray-700 mb-2">Step-by-Step Application</h6>
+                        <div className="text-sm text-gray-600 space-y-2">
                           {formatNumberedList(method.application).map((step, stepIndex) => (
                             <p key={stepIndex} className="pl-4">
                               {step}
@@ -380,8 +380,8 @@ export default function AiStudySuggestions({ documents, eventDate, onCreateEvent
                       </div>
 
                       <div>
-                        <h6 className="text-sm font-medium text-blue-800 mb-2">Why This Method Works</h6>
-                        <p className="text-sm text-blue-700">
+                        <h6 className="text-sm font-medium text-gray-700 mb-2">Why This Method Works</h6>
+                        <p className="text-sm text-gray-600">
                           {method.rationale}
                         </p>
                       </div>

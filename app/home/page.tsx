@@ -36,13 +36,6 @@ const menuItems = [
     color: 'bg-green-100 text-green-600'
   },
   {
-    title: 'Study Timer',
-    description: 'Use the Pomodoro timer to manage study sessions',
-    icon: <FaClock className="w-8 h-8" />,
-    href: '/study-timer',
-    color: 'bg-purple-100 text-purple-600'
-  },
-  {
     title: 'Calendar',
     description: 'Manage your test dates and homework deadlines',
     icon: <FaCalendarAlt className="w-8 h-8" />,

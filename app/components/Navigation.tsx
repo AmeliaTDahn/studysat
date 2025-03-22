@@ -3,7 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { FaHome, FaBook, FaChartLine, FaClock, FaGraduationCap, FaCalendarAlt } from 'react-icons/fa';
+import { FaHome, FaBook, FaChartLine, FaGraduationCap, FaCalendarAlt, FaFileAlt } from 'react-icons/fa';
 
 const navItems = [
   {
@@ -22,14 +22,14 @@ const navItems = [
     icon: <FaChartLine className="w-5 h-5" />
   },
   {
-    label: 'Study Timer',
-    href: '/study-timer',
-    icon: <FaClock className="w-5 h-5" />
-  },
-  {
     label: 'Calendar',
     href: '/calendar',
     icon: <FaCalendarAlt className="w-5 h-5" />
+  },
+  {
+    label: 'Study Materials',
+    href: '/study-materials',
+    icon: <FaFileAlt className="w-5 h-5" />
   },
   {
     label: 'Resources',

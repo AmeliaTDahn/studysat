@@ -12,10 +12,15 @@ drop table if exists public.study_suggestions cascade;
 drop table if exists public.study_methods cascade;
 drop table if exists public.ai_generated_study_events cascade;
 drop table if exists public.ai_study_methods cascade;
+drop table if exists public.quizzes cascade;
+drop table if exists public.study_summaries cascade;
+drop table if exists public.study_session_documents cascade;
 drop function if exists public.handle_updated_at cascade;
 drop function if exists public.update_study_statistics cascade;
 drop function if exists public.request_document_analysis cascade;
 drop function if exists public.generate_ai_calendar_suggestions cascade;
+drop trigger if exists on_auth_user_created on auth.users;
+drop function if exists public.handle_new_user cascade;
 
 -- Create storage bucket for documents
 insert into storage.buckets (id, name, public) 
@@ -70,13 +75,44 @@ $$ language plpgsql;
 
 -- Create users table
 create table public.users (
-  id uuid default gen_random_uuid() primary key,
+  id uuid references auth.users on delete cascade primary key,
   email varchar(255) unique not null,
   full_name varchar(255),
   avatar_url text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- Enable Row Level Security
+alter table public.users enable row level security;
+
+-- Create policies for users table
+create policy "Users can view their own profile" 
+  on public.users for select 
+  using (auth.uid() = id);
+
+create policy "Users can update their own profile" 
+  on public.users for update 
+  using (auth.uid() = id);
+
+create policy "Enable insert for authenticated users only"
+  on public.users for insert
+  with check (auth.uid() = id);
+
+-- Create a function to handle new user signup
+create or replace function public.handle_new_user()
+returns trigger as $$
+begin
+  insert into public.users (id, email, full_name)
+  values (new.id, new.email, new.raw_user_meta_data->>'full_name');
+  return new;
+end;
+$$ language plpgsql security definer;
+
+-- Create a trigger to automatically create a user profile
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
 
 -- Create subjects table
 create table public.subjects (
@@ -228,25 +264,6 @@ begin
   return analysis_id;
 end;
 $$;
-
--- Enable Row Level Security
-alter table public.users enable row level security;
-alter table public.subjects enable row level security;
-alter table public.documents enable row level security;
-alter table public.study_sessions enable row level security;
-
--- Create policies for users table
-create policy "Users can view their own profile" 
-  on public.users for select 
-  using (auth.uid() = id);
-
-create policy "Users can update their own profile" 
-  on public.users for update 
-  using (auth.uid() = id);
-
-create policy "Enable insert for users during signup"
-  on public.users for insert
-  with check (true);
 
 -- Create policies for subjects table
 create policy "Users can view their own subjects"
@@ -859,4 +876,213 @@ begin
 
   return event_id;
 end;
-$$; 
+$$;
+
+-- Create study_summaries table
+create table public.study_summaries (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references public.users(id) on delete cascade not null,
+  study_session_id uuid references public.study_sessions(id) on delete cascade not null,
+  title text not null,
+  summary_content text not null,
+  key_concepts text[] not null,
+  learning_objectives text[] not null,
+  practice_questions jsonb not null, -- Array of {question: string, answer: string}
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  -- Each study session should only have one summary
+  unique(study_session_id)
+);
+
+-- Create function to generate study summary
+create or replace function generate_study_summary(
+  session_id uuid,
+  openai_response json
+)
+returns uuid
+language plpgsql
+security definer
+as $$
+declare
+  summary_id uuid;
+begin
+  -- Insert the study summary
+  insert into public.study_summaries (
+    user_id,
+    study_session_id,
+    title,
+    summary_content,
+    key_concepts,
+    learning_objectives,
+    practice_questions
+  ) values (
+    auth.uid(),
+    session_id,
+    openai_response->>'title',
+    openai_response->>'summary_content',
+    (openai_response->>'key_concepts')::text[],
+    (openai_response->>'learning_objectives')::text[],
+    openai_response->'practice_questions'
+  )
+  returning id into summary_id;
+
+  return summary_id;
+end;
+$$;
+
+-- Create quizzes table
+create table public.quizzes (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  documents jsonb not null,
+  questions jsonb not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable RLS for quizzes
+alter table public.quizzes enable row level security;
+
+-- Create policies for quizzes
+create policy "Users can create their own quizzes"
+  on public.quizzes for insert
+  to authenticated
+  with check (auth.uid() = user_id);
+
+create policy "Users can view their own quizzes"
+  on public.quizzes for select
+  to authenticated
+  using (auth.uid() = user_id);
+
+create policy "Users can update their own quizzes"
+  on public.quizzes for update
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete their own quizzes"
+  on public.quizzes for delete
+  to authenticated
+  using (auth.uid() = user_id);
+
+-- Add trigger for quizzes updated_at
+create trigger handle_quizzes_updated_at
+  before update on public.quizzes
+  for each row
+  execute function public.handle_updated_at();
+
+-- Add helpful comments
+comment on table public.quizzes is 'Stores generated quizzes based on study materials';
+comment on column public.quizzes.documents is 'JSON array of study materials used to generate the quiz';
+comment on column public.quizzes.questions is 'JSON array of quiz questions with choices and explanations';
+
+-- Create study_session_documents junction table
+create table public.study_session_documents (
+  id uuid default gen_random_uuid() primary key,
+  session_id uuid references public.study_sessions(id) on delete cascade not null,
+  document_id uuid references public.documents(id) on delete cascade not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  -- Each document can only be linked once to a session
+  unique(session_id, document_id)
+);
+
+-- Add trigger for updated_at
+create trigger handle_study_session_documents_updated_at
+  before update on public.study_session_documents
+  for each row
+  execute function public.handle_updated_at();
+
+-- Enable RLS for study_session_documents
+alter table public.study_session_documents enable row level security;
+
+-- Create policies for study_session_documents
+create policy "Users can view their own session documents"
+  on public.study_session_documents for select
+  using (
+    exists (
+      select 1 from public.study_sessions
+      where study_sessions.id = study_session_documents.session_id
+      and study_sessions.user_id = auth.uid()
+    )
+  );
+
+create policy "Users can link documents to their own sessions"
+  on public.study_session_documents for insert
+  with check (
+    exists (
+      select 1 from public.study_sessions
+      where study_sessions.id = study_session_documents.session_id
+      and study_sessions.user_id = auth.uid()
+    )
+  );
+
+create policy "Users can update their own session document links"
+  on public.study_session_documents for update
+  using (
+    exists (
+      select 1 from public.study_sessions
+      where study_sessions.id = study_session_documents.session_id
+      and study_sessions.user_id = auth.uid()
+    )
+  );
+
+create policy "Users can remove document links from their own sessions"
+  on public.study_session_documents for delete
+  using (
+    exists (
+      select 1 from public.study_sessions
+      where study_sessions.id = study_session_documents.session_id
+      and study_sessions.user_id = auth.uid()
+    )
+  );
+
+-- Function to link documents from AI study event to calendar event
+create or replace function public.link_ai_event_documents(
+  ai_event_id uuid,
+  calendar_event_id uuid
+)
+returns void
+language plpgsql
+security definer
+as $$
+declare
+  ai_event record;
+  doc_id uuid;
+begin
+  -- Get the AI event and verify ownership
+  select * into ai_event
+  from public.ai_generated_study_events
+  where id = ai_event_id
+  and user_id = auth.uid();
+
+  if ai_event is null then
+    raise exception 'AI event not found or unauthorized';
+  end if;
+
+  -- For each document in the AI event's documents array
+  for doc_id in
+    select value->>'id'
+    from jsonb_array_elements(ai_event.documents)
+    where value->>'id' is not null
+  loop
+    -- Insert into calendar_event_documents
+    insert into public.calendar_event_documents (
+      event_id,
+      document_id,
+      importance,
+      notes
+    )
+    values (
+      calendar_event_id,
+      doc_id::uuid,
+      3, -- Default medium importance
+      'Added from AI study suggestion' -- Default note
+    )
+    on conflict (event_id, document_id) do nothing; -- Skip if already linked
+  end loop;
+end;
+$$;
+
+-- Add helpful comments
+comment on function public.link_ai_event_documents is 'Links documents from an AI-generated study event to a calendar event'; 
